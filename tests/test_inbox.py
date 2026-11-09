@@ -581,6 +581,36 @@ class Switch(Base):
         (Path(os.environ['CLAUDE_INBOX_HOME']) / 'server.pid').write_text('1')
         self.assertEqual(self.guard(), (0, ''))  # 有殘留 pid 檔但服務不在
 
+    def test_guard_and_ask_agree_even_without_pid_file(self):
+        self.set_config(switch=True)
+        self.run_inbox_server()
+        (Path(os.environ['CLAUDE_INBOX_HOME']) / 'server.pid').unlink()
+        self.assertEqual(self.guard()[0], 2)  # 服務在回應就算開著，跟 ask 的判定一致
+
+    def test_guard_reports_broken_config_and_lets_question_through(self):
+        inbox.home()
+        path = Path(os.environ['CLAUDE_INBOX_HOME']) / 'config.json'
+        for broken in ('{not json', json.dumps({'switch': 'true'})):
+            path.write_text(broken, encoding='utf-8')
+            code, _ = self.guard()
+            self.assertIsInstance(code, str)  # sys.exit(訊息) → exit 1：不擋，但有說原因
+            self.assertIn('照常用 AskUserQuestion', code)
+
+    def test_toggle_with_bad_switch_changes_nothing(self):
+        self.set_config(switch='yes', port=free_port())
+        with self.assertRaises(SystemExit), redirect_stdout(io.StringIO()):
+            inbox.main(['toggle'])
+        inbox.ensure_server.assert_not_called()
+
+    def test_stop_keeps_pid_file_when_kill_is_denied(self):
+        inbox.home()
+        pidfile = Path(os.environ['CLAUDE_INBOX_HOME']) / 'server.pid'
+        pidfile.write_text('4242')
+        with mock.patch.object(inbox.os, 'kill', side_effect=PermissionError('denied')):
+            with self.assertRaises(SystemExit), redirect_stdout(io.StringIO()):
+                inbox.main(['stop'])
+        self.assertTrue(pidfile.exists())
+
     def test_bad_switch_value_is_an_error(self):
         self.set_config(switch='yes')
         with self.assertRaises(SystemExit), redirect_stdout(io.StringIO()):

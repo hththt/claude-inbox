@@ -694,18 +694,23 @@ def cmd_stop(args):
     try:
         os.kill(int(pidfile.read_text()), signal.SIGTERM)
         print('已停止')
+    except PermissionError as exc:  # 砍不掉：保留 pid 檔，免得之後被當成已經關了
+        sys.exit('沒有權限停止收件匣服務（%s），server.pid 保留' % exc)
     except (OSError, ValueError):  # Windows 找不到 PID 丟的是 OSError，不是 ProcessLookupError
         print('服務本來就沒在跑')
-    pidfile.unlink()
+    pidfile.unlink(missing_ok=True)
 
 
 def cmd_guard(args):
     """PreToolUse AskUserQuestion 的 hook：開關模式且服務開著就擋下（exit 2），stderr 給 agent 看。"""
     sys.stdin.read()  # hook JSON 用不到，讀掉避免寫端阻塞
-    config = read_config(home() / 'config.json')
-    if not switch_mode(config) or not (home() / 'server.pid').exists():
-        return  # 不是開關模式，或服務沒在跑：照常用 AskUserQuestion（沒 pid 檔就不必打 HTTP）
-    if server_alive(config):
+    try:
+        config = read_config(home() / 'config.json')
+        switch = switch_mode(config)
+    except ValueError as exc:  # JSON 壞掉或 switch 型別錯：不擋（exit 1），讓 Claude 照常問，但講清楚原因
+        sys.exit('收件匣 guard：config.json 有問題，這次照常用 AskUserQuestion：%s' % exc)
+    # 跟 inbox ask 用同一個判定（服務有沒有回應），兩邊才不會一個說開著、一個說關著
+    if switch and server_alive(config):
         print(GUARD_MESSAGE, file=sys.stderr)
         sys.exit(2)
 
@@ -713,19 +718,24 @@ def cmd_guard(args):
 def cmd_toggle(args):
     """開著就關、關著就開；開啟時用知會題等級推一則 Bark，順便確認手機收得到。"""
     config = load_config()
-    if server_alive(config):
-        cmd_stop(args)
-        for _ in range(25):
-            if not server_alive(config):
-                return print('收件匣已關閉：Claude 恢復在對話裡問你（AskUserQuestion）')
-            time.sleep(0.2)
-        sys.exit('收件匣關不掉，請看 %s' % (home() / 'server.pid'))
-    if not ensure_server(config):
-        sys.exit('收件匣服務沒起來，請看 %s' % (home() / 'server.log'))
-    print('收件匣已開啟：%s' % base_url(config))
-    print('Claude 要你決定的事會改送到這裡' + ('並推播到手機' if switch_mode(config) else ''))
-    try:
+    try:  # 先驗設定再動服務：設定壞了就什麼都不改
+        switch = switch_mode(config)
         s = bark_settings(config)
+    except ValueError as exc:
+        sys.exit('設定有問題，收件匣沒有切換：%s' % exc)
+    with FileLock(home() / 'toggle.lock'):  # 連點兩下時第二次等第一次做完，再依當下狀態切換
+        if server_alive(config):
+            cmd_stop(args)
+            for _ in range(25):
+                if not server_alive(config):
+                    return print('收件匣已關閉：Claude 恢復在對話裡問你（AskUserQuestion）')
+                time.sleep(0.2)
+            sys.exit('收件匣關不掉，請看 %s' % (home() / 'server.pid'))
+        if not ensure_server(config):
+            sys.exit('收件匣服務沒起來，請看 %s' % (home() / 'server.log'))
+    print('收件匣已開啟：%s' % base_url(config))
+    print('Claude 要你決定的事會改送到這裡' + ('並推播到手機' if switch else ''))
+    try:
         if not s['enabled']:
             return print('Bark 推播是關的，沒有送開啟通知')
         when = datetime.now(TAIPEI).strftime('%H:%M')
