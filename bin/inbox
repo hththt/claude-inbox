@@ -1,3 +1,15 @@
 #!/bin/sh
-# 收件匣指令入口：plugin 啟用時 Claude Code 會把 bin/ 放進 PATH。
-exec python3 "$(dirname "$0")/../inbox/inbox.py" "$@"
+# 收件匣指令入口：plugin 啟用時 Claude Code 會把 bin/ 放進 PATH，hook 也走這裡。
+# Windows 的 python3／python 若落在 WindowsApps，可能只是 Microsoft Store 的「去安裝」空殼，要試跑才知道；
+# 其他位置直接用，不多啟動一次 Python。hook 每輪都跑，所以也不用 dirname（MSYS 每開一個子殼約 15ms）。
+case $0 in */*) dir=${0%/*} ;; *) dir=. ;; esac
+script="$dir/../inbox/inbox.py"
+for py in python3 python py; do
+  path=$(command -v "$py") || continue
+  case "$path" in
+    */WindowsApps/*) "$py" -c "" >/dev/null 2>&1 || continue ;;
+  esac
+  exec "$py" "$script" "$@"
+done
+echo "收件匣：找不到可執行的 Python（試過 python3、python、py）" >&2
+exit 127

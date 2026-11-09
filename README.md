@@ -58,13 +58,15 @@ Claude Code 專用的「決定信箱」：agent 要你拍板的事，統一放�
 | **不叫 AI、不上雲** | 只用 Python 標準庫。題目就是 agent 寫的那一份，資料全部放在你自己的電腦 |
 | **預設安全** | 只開在本機，所有操作都要 token；題目文字一律當純文字顯示，不會被執行 |
 | **手機也能回** | 把位址改成你的 Tailscale 或內網位址，就能在手機上回答（見下方進階說明） |
+| **手機推播** | 開了 Bark 推播，有新題目時 iPhone 會響，可選鈴聲、單響或連響、推播等級（見下方說明） |
+| **原生 Windows** | 不用 WSL：PowerShell、cmd、Git Bash 都能跑（本 fork 新增） |
 
 ## 30 秒開始
 
 在 Claude Code 裡輸入：
 
 ```
-/plugin marketplace add chenjackle45/claude-inbox
+/plugin marketplace add hththt/claude-inbox
 /plugin install inbox@claude-inbox
 ```
 
@@ -92,7 +94,36 @@ Claude Code 專用的「決定信箱」：agent 要你拍板的事，統一放�
 inbox ask --title "要不要上新版？" --option "A=上" --option "B=不上" --recommend A
 ```
 
-> `inbox` 指令是給 agent 的 Bash 用的。你自己在終端機試的話，改用 `python3 <plugin 資料夾>/inbox/inbox.py`，後面的參數一樣。
+> `inbox` 指令是給 agent 的 Bash 用的。你自己在終端機試的話，改用 `sh <plugin 資料夾>/bin/inbox`（PowerShell／cmd 用 `<plugin 資料夾>\bin\inbox.cmd`），後面的參數一樣。
+
+## 📱 Bark 手機推播（本 fork 新增）
+
+有新題目時用 [Bark](https://github.com/Finb/Bark) 推到 iPhone，不用一直開著網頁。預設關閉。
+
+1. 把 Bark App 給的推播網址設成環境變數 `BARK_URL`（例如 `https://api.day.app/<device_key>`）。網址只從環境變數讀，**不會寫進任何檔案**。設完要重開終端機與 Claude Code。
+2. 開啟並試聽：
+
+```bash
+inbox bark on              # 開啟（沒有 BARK_URL 會直接報錯，不會假裝開好）
+inbox bark test            # 用目前設定發一則測試推播
+inbox bark test --sound glass --volume 4   # 試聽別的鈴聲，不存
+inbox bark set --sound glass --call on     # 改設定
+inbox bark                 # 看目前設定
+inbox bark off             # 關閉
+```
+
+| 設定 | 預設 | 說明 |
+|---|---|---|
+| `--sound` | `chime` | Bark 鈴聲名稱（內建如 `chime` `glass` `bell` `bloom`，或 Bark App 自訂鈴聲） |
+| `--call` | `off` | `on` 連響約 30 秒、`off` 單響；只套用在待決定題（Bark 只支援這兩種長度，不能指定秒數） |
+| `--level` | `critical` | 待決定題的推播等級：`critical` 靜音或勿擾也會響，`timeSensitive`、`active`、`passive` 照手機設定 |
+| `--volume` | `2` | 重要警示音量 0-10，只對 `critical` 有效 |
+| `--info-level` | `active` | 知會題（`inbox ask --info`）的推播等級；知會題一律單響 |
+
+- 推播標題是 `[收件匣/<來源>] 待你決定` 或 `知會`，內文是題目標題與期限。**不帶收件匣網址與 token**，點開推播只會進 Bark App。
+- 設定存在 `~/.claude-inbox/config.json` 的 `bark` 段，改了立刻生效，不用重啟服務。欄位填錯會直接報錯，不會默默改用預設值。
+- 開著推播但缺 `BARK_URL` 或設定填錯時，`inbox ask` 會報錯、不放題目；推播送出失敗時題目已經放好，錯誤訊息會提醒 agent 不要重出。錯誤訊息裡的推播網址與 device key 一律遮蔽。
+- `critical` 要先在 iPhone 允許 Bark 的「重要警示」（設定 → Bark → 通知 → 重要警示）。
 
 ## 你已經有自己的開發規則？疊上去，不要換掉
 
@@ -119,7 +150,7 @@ inbox ask --title "要不要上新版？" --option "A=上" --option "B=不上" -
 收件匣的核心是一支 Python 指令加一個網頁，不綁 Claude Code。plugin 只是 Claude Code 專用的打包。其他 agent 能在 shell 裡直接跑同一支指令：
 
 ```bash
-git clone https://github.com/chenjackle45/claude-inbox
+git clone https://github.com/hththt/claude-inbox
 python3 claude-inbox/inbox/inbox.py ask --title "要不要上新版？" --option "A=上" --option "B=不上"
 python3 claude-inbox/inbox/inbox.py wait --timeout 1800   # 有回覆時印出答案並結束
 ```
@@ -155,7 +186,7 @@ python3 /path/to/claude-inbox/inbox/inbox.py ask --title "..." --option "A=..." 
 { "host": "你的 Tailscale 或內網位址", "port": 7799 }
 ```
 
-位址只支援 IPv4。token 不分本機或遠端，第一次使用時自動產生，寫進同一個檔（檔案權限 600，資料夾權限 700）。改位址或換 token 後都要重新啟動服務：`inbox stop` 再 `inbox start`。執行中的服務不會自動套用新設定，舊 token 在它重啟前仍然有效。用 `inbox url` 可以印出帶 token 的完整網址。
+位址只支援 IPv4。token 不分本機或遠端，第一次使用時自動產生，寫進同一個檔（macOS／Linux 上檔案權限 600，資料夾權限 700；Windows 靠使用者資料夾本身的存取控制）。改位址或換 token 後都要重新啟動服務：`inbox stop` 再 `inbox start`。執行中的服務不會自動套用新設定，舊 token 在它重啟前仍然有效。用 `inbox url` 可以印出帶 token 的完整網址。
 
 ### 資料放哪
 
@@ -165,7 +196,7 @@ python3 /path/to/claude-inbox/inbox/inbox.py ask --title "..." --option "A=..." 
 |---|---|
 | `questions/*.json` | 題目，一題一檔 |
 | `events.jsonl` | 你的回答、送達紀錄、收起紀錄，只增不改 |
-| `config.json` | 位址、埠、token |
+| `config.json` | 位址、埠、token、Bark 推播設定（`BARK_URL` 不在這裡，只讀環境變數） |
 
 題目與答案都是明文，不要放密碼或金鑰。
 
@@ -178,16 +209,26 @@ python3 /path/to/claude-inbox/inbox/inbox.py ask --title "..." --option "A=..." 
 - 只收 `Host` 與 `Origin` 符合的請求，擋掉別的網頁偷打你的本機服務。
 - 所有 API 都要 token，本機也一樣：答案會被放進 agent 的上下文，不能讓同一台機器上的其他程式隨便寫入。
 - 頁面把題目文字當純文字顯示，只有網址會變成連結。
-- 回答只在你的機器上流動，沒有任何外送。
+- 回答只在你的機器上流動，沒有任何外送。開了 Bark 推播時，只有題目標題、來源與期限會經過 Bark 伺服器與 Apple 推播服務；網址、token、題目內文與回答都不會送出。
 
 ### 需求
 
-Python 3.9 以上。答案自動送回 agent 需要 Claude Code；其他 agent 的用法見上方。支援 macOS、Linux 與 WSL（原生 Windows 不支援）。沒有其他依賴。
+Python 3.9 以上。答案自動送回 agent 需要 Claude Code；其他 agent 的用法見上方。支援 macOS、Linux、WSL 與原生 Windows。沒有其他依賴。
+
+### 原生 Windows
+
+- hook 與 `inbox` 指令都走 `bin/inbox`（sh 腳本，Claude Code 在 Windows 用 Git Bash 跑 hook 與 Bash 工具）。PowerShell 或 cmd 用 `bin\inbox.cmd`。
+- 依序找 `python3`、`python`、`py`。落在 `WindowsApps` 的 Python 可能只是 Microsoft Store 的「去安裝」空殼，會先試跑一次，跑不動就換下一個；都找不到時直接報錯。
+- `bin/.gitattributes` 讓 `bin/inbox` 一律用 LF 換行，`git config core.autocrlf true` 也不會把它轉成 CRLF 而跑不動。
+- 本機位址一律用 `127.0.0.1`：Windows 上連 `localhost` 會先試 IPv6，只綁 IPv4 的服務要多等約 2 秒。
+- Windows 允許兩個程式用 `SO_REUSEADDR` 綁同一個埠，所以服務在 Windows 上改成獨佔綁定。
+- 背景服務用脫離主控台的獨立行程啟動，不跳視窗，關掉終端機或 Claude Code 也不會被一起關掉。要停用 `inbox stop`。
+- 預設埠 7799 若落在 Windows 保留的埠範圍（Hyper-V／WSL／Docker），沒人在用也綁不到，`server.log` 會寫出原因。用 `netsh interface ipv4 show excludedportrange protocol=tcp` 查，再在 `config.json` 換一個埠。
 
 ### 開發
 
 ```bash
-python3 -m unittest discover tests
+python3 -m unittest discover tests   # Windows 用 python
 ```
 
 </details>

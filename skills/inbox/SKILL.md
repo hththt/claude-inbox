@@ -32,7 +32,12 @@ inbox ask --title "登入頁要不要保留舊的帳密登入？" \
 
 出題後指令會印出題號和網址。第一次出題時會自動在背景起網頁服務。
 
-如果 `inbox` 指令找不到，改用 `python3 "${CLAUDE_PLUGIN_ROOT}/inbox/inbox.py"`，後面參數一樣。
+如果 `inbox` 指令找不到，改用 `sh "${CLAUDE_PLUGIN_ROOT}/bin/inbox"`（PowerShell 用 `& "$env:CLAUDE_PLUGIN_ROOT\bin\inbox.cmd"`），後面參數一樣。
+
+使用者開了 Bark 推播時，出題會順便推到他手機。
+- 指令回「Bark 推播失敗（題目已經放進收件匣，不要重出）」：題目已經在收件匣，不要再出一次；把錯誤原因轉告使用者。
+- 指令回「Bark 設定有問題，題目沒有放進收件匣」：題目沒放進去，把原因告訴使用者，等他修好設定再出題。
+- 推播設定（`inbox bark on|off|set`）是使用者的事，他沒要求時不要自己改。
 
 ## 專案已有自己的規則時
 

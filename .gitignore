@@ -1,3 +1,8 @@
 __pycache__/
 *.pyc
 .DS_Store
+# 收件匣資料夾若被 CLAUDE_INBOX_HOME 指到 repo 裡：token、題目與回答都不得進版控
+.claude-inbox/
+config.json
+events.jsonl
+.env

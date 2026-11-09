@@ -1,0 +1,3 @@
+# sh 腳本必須是 LF（CRLF 會讓 #!/bin/sh 變成 /bin/sh\r 而跑不動）；cmd 腳本用 CRLF
+inbox text eol=lf
+*.cmd text eol=crlf
