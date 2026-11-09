@@ -568,15 +568,55 @@ def serve(config):
     server.serve_forever()
 
 
-def server_alive(config):
+def answers_like_inbox(url, headers=None):
+    """網址回 200 且是收件匣的 state JSON 才算；別的程式剛好回 200 不算。"""
     import urllib.request
-    req = urllib.request.Request(page_url(config) + 'api/state')
     try:
-        with urllib.request.urlopen(req, timeout=2) as resp:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers or {}), timeout=2) as resp:
             body = json.loads(resp.read().decode('utf-8'))
             return resp.status == 200 and isinstance(body, dict) and 'questions' in body
     except Exception:
         return False
+
+
+def server_alive(config):
+    return answers_like_inbox(page_url(config) + 'api/state')
+
+
+def legacy_alive(config):
+    """0.3.1 以前的服務：API 在 /api/state、token 放 X-Inbox-Token 標頭。
+
+    用目前的 token 打得通，才確定是自己的舊版收件匣（新版對這個路徑一律回 404）。
+    """
+    return answers_like_inbox(base_url(config) + 'api/state', {'X-Inbox-Token': config.get('token', '')})
+
+
+def stop_legacy_server(config):
+    """升級後舊版服務還佔著埠時停掉它，新版才綁得上；不是自己的舊版就不碰，照常報啟動失敗。
+
+    server.pid 只在綁埠成功時寫入，舊版佔著埠時新版綁不上、蓋不掉它，所以裡面就是舊版的 PID。
+    有停掉舊版才回 True。
+    """
+    import signal
+    if not legacy_alive(config):
+        return False
+    pidfile = home() / 'server.pid'
+    try:
+        pid = int(pidfile.read_text())
+    except (OSError, ValueError):
+        sys.exit('舊版收件匣服務佔著埠 %s，但讀不到 %s，沒辦法自動停：請手動結束 inbox.py serve 程序'
+                 % (config['port'], pidfile))
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError as exc:
+        sys.exit('舊版收件匣服務佔著埠 %s，停不掉（PID %d）：%s' % (config['port'], pid, exc))
+    for _ in range(25):
+        if not legacy_alive(config):
+            pidfile.unlink(missing_ok=True)
+            print('舊版收件匣服務還佔著埠 %s，已停掉（PID %d）' % (config['port'], pid))
+            return True
+        time.sleep(0.2)
+    sys.exit('舊版收件匣服務停不下來（PID %d），請手動結束 inbox.py serve 程序' % pid)
 
 
 def ensure_server(config):
@@ -737,7 +777,8 @@ def cmd_toggle(args):
                     return print('收件匣已關閉：Claude 恢復在對話裡問你（AskUserQuestion）')
                 time.sleep(0.2)
             sys.exit('收件匣關不掉，請看 %s' % (home() / 'server.pid'))
-        if not ensure_server(config):
+        # 起不來才檢查是不是舊版佔著埠，是就停掉再開一次（平常開啟不多花一次探測）
+        if not ensure_server(config) and not (stop_legacy_server(config) and ensure_server(config)):
             sys.exit('收件匣服務沒起來，請看 %s' % (home() / 'server.log'))
     print('收件匣已開啟：%s' % page_url(config))
     print('Claude 要你決定的事會改送到這裡' + ('並推播到手機' if switch else ''))

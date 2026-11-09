@@ -16,3 +16,4 @@
 2026-11-09 | 開關模式：config 的 switch=true 時以「服務有沒有開」判斷使用者在不在；開著由 plugin 的 PreToolUse guard 把 AskUserQuestion 導去收件匣，關著 inbox ask 報錯且不自動啟動；桌面捷徑跑 inbox toggle | 使用者要用桌面捷徑明確切換；閒置偵測會把盯著畫面看當離開；guard 放在 plugin 內兩個帳號自動同步 | 鍵盤滑鼠閒置 10 分鐘、只靠使用者口頭說要離開、guard 放 ~/.claude/hooks
 2026-11-09 | 開關狀態仍以「服務有沒有回應」判斷，不改成狀態檔 | 狀態檔在重開機後會殘留，違反「沒啟動就恢復原本方式」；Tailscale 斷線時的誤判只讓提問改回對話，而斷線期間手機本來也連不到 | 開關狀態寫檔、比對 PID 與開機時間
 2026-11-09 | token 從 `?t=` 參數改放網址路徑 `/<token>/`，網頁與 API 都在這段底下，不對一律 404；推播不再帶網址；網頁不再用 localStorage 記 token | 使用者要書籤與主畫面捷徑直接帶 token；網址含 token 後就不能經過 Bark 與 Apple；路徑形式下網頁用相對路徑打 API 即可 | 維持 `?t=`＋localStorage、推播帶不含 token 的根網址（根網址改回 404 已無用）
+2026-11-09 | inbox toggle 開啟失敗時，若埠上是用目前 token 打得通舊版 API（/api/state＋X-Inbox-Token）的服務，就依 server.pid 停掉再開；其他程式或 token 不同的不碰 | 升 0.3.2 時舊版服務佔著 7799，新版判斷成沒開、綁埠失敗；舊版 API 認得自己的 token 才能確定是自家服務，server.pid 只在綁埠成功時寫入，舊版佔著時不會被蓋掉；起不來才查，因為 Windows 連關閉的埠每次探測約 2 秒 | 讀程序命令列比對（Windows 要 WMI，慢又多依賴）、埠被佔就砍 server.pid 的程序（可能砍錯）、只改錯誤訊息

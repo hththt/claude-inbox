@@ -659,6 +659,92 @@ class Switch(Base):
         self.assertEqual(len(inbox.load_questions()), 1)
         inbox.ensure_server.assert_not_called()
 
+    def legacy_server(self, port, token):
+        """模擬 0.3.1 以前的服務：只認 /api/state 加 X-Inbox-Token 標頭。"""
+        from http.server import BaseHTTPRequestHandler
+
+        class Legacy(BaseHTTPRequestHandler):
+            def do_GET(self):
+                ok = self.path == '/api/state' and self.headers.get('X-Inbox-Token') == token
+                body = b'{"questions": []}' if ok else b'not found'
+                self.send_response(200 if ok else 404)
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        httpd = ThreadingHTTPServer(('127.0.0.1', port), Legacy)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        return httpd
+
+    def test_toggle_replaces_old_version_server_on_same_port(self):
+        port = free_port()
+        self.set_config(switch=True, port=port, token='tok-legacy-test')
+        legacy = self.legacy_server(port, 'tok-legacy-test')
+        home = Path(os.environ['CLAUDE_INBOX_HOME'])
+        (home / 'server.pid').write_text('4242')
+
+        def kill(pid, sig):  # 「砍掉」舊版：關掉假服務，放出埠
+            self.assertEqual(pid, 4242)
+            legacy.shutdown()
+            legacy.server_close()
+
+        try:
+            with mock.patch.object(inbox, 'ensure_server', REAL_ENSURE_SERVER):
+                with mock.patch.object(inbox.os, 'kill', side_effect=kill) as killed, \
+                        redirect_stdout(io.StringIO()) as out:
+                    inbox.main(['toggle'])
+                killed.assert_called_once()
+                self.assertIn('舊版收件匣服務還佔著埠 %d，已停掉（PID 4242）' % port, out.getvalue())
+                self.assertIn('收件匣已開啟', out.getvalue())
+                self.assertTrue(inbox.server_alive(inbox.load_config()))
+                self.assertNotEqual((home / 'server.pid').read_text(), '4242')  # 換成新版服務的 PID
+        finally:
+            if inbox.server_alive(inbox.load_config()):
+                with redirect_stdout(io.StringIO()):
+                    inbox.main(['stop'])
+            for _ in range(80):
+                try:
+                    (home / 'server.log').unlink()
+                    break
+                except FileNotFoundError:
+                    break
+                except PermissionError:
+                    time.sleep(0.05)
+
+    def test_toggle_never_kills_other_program_or_other_token(self):
+        port = free_port()
+        self.set_config(switch=True, port=port, token='tok-mine')
+        self.legacy_server(port, 'tok-someone-else')  # 舊版協定但 token 不同：不能確定是自己的
+        (Path(os.environ['CLAUDE_INBOX_HOME']) / 'server.pid').write_text('4242')
+        inbox.ensure_server.return_value = False  # 埠被佔，新版起不來
+        with mock.patch.object(inbox.os, 'kill') as killed, redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as cm:
+                inbox.main(['toggle'])
+        killed.assert_not_called()
+        self.assertIn('收件匣服務沒起來', str(cm.exception.code))
+
+    def test_old_version_without_pid_file_is_reported(self):
+        port = free_port()
+        self.set_config(switch=True, port=port, token='tok-legacy-test')
+        self.legacy_server(port, 'tok-legacy-test')
+        inbox.ensure_server.return_value = False  # 埠被舊版佔著，新版起不來
+        with mock.patch.object(inbox.os, 'kill') as killed, redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as cm:
+                inbox.main(['toggle'])
+        killed.assert_not_called()
+        self.assertIn('沒辦法自動停', str(cm.exception.code))
+
+    def test_normal_toggle_on_does_not_probe_for_old_version(self):
+        self.set_config(switch=True, port=free_port())
+        with mock.patch.object(inbox, 'legacy_alive') as probed, redirect_stdout(io.StringIO()):
+            inbox.main(['toggle'])
+        probed.assert_not_called()
+
     def test_toggle_turns_on_with_push_then_off(self):
         fake = FakeBark(self)
         os.environ['BARK_URL'] = fake.url
