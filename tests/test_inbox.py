@@ -500,6 +500,19 @@ class Bark(Base):
         self.assertIn('status 不接受', self.exit_message(['bark', 'status', '--sound', 'x']))
 
 
+    def test_push_links_to_inbox_without_token_only_when_reachable(self):
+        self.bark('on')
+        self.ask('--title', '本機')
+        self.assertNotIn('url', self.fake.received[-1][1])  # 只開在本機：手機連不到，不帶網址
+        path = Path(os.environ['CLAUDE_INBOX_HOME']) / 'config.json'
+        config = json.loads(path.read_text(encoding='utf-8'))
+        config['host'] = '100.64.0.1'
+        path.write_text(json.dumps(config), encoding='utf-8')
+        self.ask('--title', 'Tailscale')
+        payload = self.fake.received[-1][1]
+        self.assertEqual(payload['url'], 'http://100.64.0.1:7799/')
+        self.assertNotIn(inbox.load_config()['token'], json.dumps(payload))
+
     def test_malformed_bark_url_never_leaks_key(self):
         os.environ['BARK_URL'] = 'api.day.app/' + DEVICE_KEY  # 漏掉 https://
         for argv in (['bark', 'test'], ['bark', 'on']):

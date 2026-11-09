@@ -379,10 +379,20 @@ def redact(text, url):
     return text
 
 
-def bark_payload(s, title, body, info):
+def bark_link(config):
+    """點推播要開的收件匣網址，不含 token（token 由網頁存在手機的 localStorage）。
+
+    服務只開在本機時手機連不到，就不帶網址。
+    """
+    return '' if is_loopback(config['host']) else base_url(config)
+
+
+def bark_payload(s, title, body, info, link=''):
     """待決定題用 level（預設 critical，靜音也響）；知會題用 info_level（預設 active），一律單響。"""
     level = s['info_level'] if info else s['level']
     payload = {'title': title, 'body': body, 'group': 'inbox', 'level': level, 'sound': s['sound']}
+    if link:
+        payload['url'] = link
     if level == 'critical':
         payload['volume'] = s['volume']  # 音量只對重要警示有效
     if s['call'] and not info:
@@ -412,12 +422,12 @@ def send_bark(url, payload):
         raise BarkError(redact('HTTP %s：%s' % (status, raw.decode('utf-8', 'replace').strip()), url))
 
 
-def notify_question(q, s, url):
-    # 推播只帶題目標題，不帶網址：token 不經過 Bark 伺服器與 Apple
+def notify_question(q, s, url, link):
+    # 推播只帶題目標題、期限與不含 token 的網址：token 不經過 Bark 伺服器與 Apple
     info = q['kind'] == 'info'
     title = '[收件匣/%s] %s' % (q['from'], '知會' if info else '待你決定')
     body = q['title'] + ('\n期限：' + q['deadline'] if q['deadline'] else '')
-    send_bark(url, bark_payload(s, title, body, info))
+    send_bark(url, bark_payload(s, title, body, info, link))
 
 
 def bark_status(s):
@@ -598,7 +608,7 @@ def cmd_ask(args):
     print('網址：' + page_url(config) if up else '服務沒起來，請看 %s' % (home() / 'server.log'))
     if bark['enabled']:
         try:
-            notify_question(q, bark, url)
+            notify_question(q, bark, url, bark_link(config))
         except BarkError as exc:
             sys.exit('Bark 推播失敗（題目已經放進收件匣，不要重出）：%s' % exc)
         print('已用 Bark 推播到手機')
@@ -687,7 +697,7 @@ def cmd_bark(args):
             body = '鈴聲 %s，%s，等級 %s，音量 %d（%s）' % (
                 s['sound'], '連響約 30 秒' if s['call'] else '單響', s['level'], s['volume'],
                 datetime.now(TAIPEI).strftime('%H:%M:%S'))
-            send_bark(bark_url(), bark_payload(s, '[收件匣] 測試推播', body, info=False))
+            send_bark(bark_url(), bark_payload(s, '[收件匣] 測試推播', body, False, bark_link(read_config(path))))
             return print('已送出測試推播：' + body)
         if args.action == 'status':
             return print(bark_status(bark_settings(read_config(path))))

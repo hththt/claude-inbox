@@ -280,12 +280,13 @@
       <span class="err" id="err" role="alert"></span>
     </footer>
     <script>
+      // token 記在 localStorage：手機用完整網址開過一次後，點 Bark 推播（網址不含 token）也能直接用
       const params = new URLSearchParams(location.search);
       if (params.get("t")) {
-        sessionStorage.setItem("inbox-token", params.get("t"));
+        localStorage.setItem("inbox-token", params.get("t"));
         history.replaceState(null, "", location.pathname);
       }
-      const TOKEN = sessionStorage.getItem("inbox-token") || "";
+      const TOKEN = localStorage.getItem("inbox-token") || "";
       const HEADERS = {
         "Content-Type": "application/json",
         "X-Inbox-Token": TOKEN,
@@ -489,7 +490,7 @@
           if (!res.ok)
             throw new Error(
               res.status === 401
-                ? "網址少了 token，請用 inbox url 印出的完整網址"
+                ? "token 不對或還沒記住，請用 inbox url 印出的完整網址開一次"
                 : "讀取失敗（" + res.status + "）",
             );
           const text = await res.text();
