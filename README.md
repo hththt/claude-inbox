@@ -186,7 +186,7 @@ python3 /path/to/claude-inbox/inbox/inbox.py ask --title "..." --option "A=..." 
 { "host": "你的 Tailscale 或內網位址", "port": 7799 }
 ```
 
-位址只支援 IPv4，網址要用 IP（用 MagicDNS 名稱連會被 Host 檢查擋下）。手機第一次用 `inbox url` 印出的完整網址開，網頁會把 token 記在手機瀏覽器的 localStorage，之後開不含 token 的網址（例如點 Bark 推播）也能用；iOS Safari 太久沒開可能清掉，再用完整網址開一次即可。Windows 記得在防火牆放行這個埠，建議只放行手機的 Tailscale IP。token 不分本機或遠端，第一次使用時自動產生，寫進同一個檔（macOS／Linux 上檔案權限 600，資料夾權限 700；Windows 靠使用者資料夾本身的存取控制）。改位址或換 token 後都要重新啟動服務：`inbox stop` 再 `inbox start`。執行中的服務不會自動套用新設定，舊 token 在它重啟前仍然有效。用 `inbox url` 可以印出帶 token 的完整網址。
+位址只支援 IPv4，網址要用 IP（用 MagicDNS 名稱連會被 Host 檢查擋下）。手機第一次用 `inbox url` 印出的完整網址開，網頁會把 token 記在手機瀏覽器的 localStorage，之後開不含 token 的網址（例如點 Bark 推播）也能用；iOS Safari 太久沒開可能清掉，再用完整網址開一次即可。Windows 上 Tailscale 安裝時自帶 `Tailscale-In` 防火牆規則，已放行整個 tailnet 連任何埠，所以不用另開；也因為允許規則是「任一條符合就放行」，想只讓手機連，加允許規則沒用，要加封鎖規則擋掉其他來源。token 不分本機或遠端，第一次使用時自動產生，寫進同一個檔（macOS／Linux 上檔案權限 600，資料夾權限 700；Windows 靠使用者資料夾本身的存取控制）。改位址或換 token 後都要重新啟動服務：`inbox stop` 再 `inbox start`。執行中的服務不會自動套用新設定，舊 token 在它重啟前仍然有效。用 `inbox url` 可以印出帶 token 的完整網址。
 
 ### 資料放哪
 
