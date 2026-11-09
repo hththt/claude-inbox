@@ -12,7 +12,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -532,6 +532,105 @@ class Bark(Base):
         msg = self.exit_message(['bark', 'test'])
         self.assertIn('HTTP 400', msg)
         self.assertNotIn(DEVICE_KEY, msg)
+
+
+class Switch(Base):
+    def set_config(self, **changes):
+        inbox.home()
+        path = Path(os.environ['CLAUDE_INBOX_HOME']) / 'config.json'
+        config = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+        config.update(changes)
+        path.write_text(json.dumps(config), encoding='utf-8')
+
+    def run_inbox_server(self):
+        """執行緒內的真服務，並寫 server.pid（guard 先看 pid 檔才打 HTTP）。"""
+        port = free_port()
+        self.set_config(port=port, token='tok-switch-test')
+        handler = inbox.handler_class()
+        handler.config = inbox.load_config()
+        httpd = ThreadingHTTPServer(('127.0.0.1', port), handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        (Path(os.environ['CLAUDE_INBOX_HOME']) / 'server.pid').write_text(str(os.getpid()))
+
+    def guard(self):
+        err = io.StringIO()
+        with mock.patch.object(sys, 'stdin', io.StringIO('{"tool_name":"AskUserQuestion"}')), \
+                redirect_stderr(err):
+            try:
+                inbox.main(['guard'])
+            except SystemExit as exc:
+                return exc.code, err.getvalue()
+        return 0, err.getvalue()
+
+    def test_guard_ignores_running_server_when_not_switch_mode(self):
+        self.run_inbox_server()
+        self.assertEqual(self.guard(), (0, ''))
+
+    def test_guard_blocks_ask_user_question_while_inbox_is_on(self):
+        self.set_config(switch=True)
+        self.run_inbox_server()
+        code, err = self.guard()
+        self.assertEqual(code, 2)
+        self.assertIn('inbox ask', err)
+
+    def test_guard_allows_when_inbox_is_off(self):
+        self.set_config(switch=True, port=free_port())
+        self.assertEqual(self.guard(), (0, ''))  # 沒有 pid 檔
+        (Path(os.environ['CLAUDE_INBOX_HOME']) / 'server.pid').write_text('1')
+        self.assertEqual(self.guard(), (0, ''))  # 有殘留 pid 檔但服務不在
+
+    def test_bad_switch_value_is_an_error(self):
+        self.set_config(switch='yes')
+        with self.assertRaises(SystemExit), redirect_stdout(io.StringIO()):
+            inbox.main(['ask', '--title', 't'])
+
+    def test_ask_refuses_and_does_not_autostart_while_inbox_is_off(self):
+        self.set_config(switch=True, port=free_port())
+        with self.assertRaises(SystemExit) as cm, redirect_stdout(io.StringIO()):
+            inbox.main(['ask', '--title', 't'])
+        self.assertIn('AskUserQuestion', str(cm.exception.code))
+        self.assertEqual(inbox.load_questions(), [])
+        inbox.ensure_server.assert_not_called()
+
+    def test_ask_works_while_inbox_is_on_without_starting_another_server(self):
+        self.set_config(switch=True)
+        self.run_inbox_server()
+        self.ask('--title', '開著')
+        self.assertEqual(len(inbox.load_questions()), 1)
+        inbox.ensure_server.assert_not_called()
+
+    def test_toggle_turns_on_with_push_then_off(self):
+        fake = FakeBark(self)
+        os.environ['BARK_URL'] = fake.url
+        self.set_config(switch=True, port=free_port(), bark={'enabled': True})
+        home = Path(os.environ['CLAUDE_INBOX_HOME'])
+        try:
+            with mock.patch.object(inbox, 'ensure_server', REAL_ENSURE_SERVER):
+                with redirect_stdout(io.StringIO()) as out:
+                    inbox.main(['toggle'])
+                self.assertIn('收件匣已開啟', out.getvalue())
+                self.assertTrue(inbox.server_alive(inbox.load_config()))
+                payload = fake.received[0][1]
+                self.assertEqual((payload['title'], payload['level']), ('[收件匣] 已開啟', 'active'))
+                self.assertNotIn('call', payload)
+                with redirect_stdout(io.StringIO()) as out:
+                    inbox.main(['toggle'])
+                self.assertIn('收件匣已關閉', out.getvalue())
+                self.assertFalse(inbox.server_alive(inbox.load_config()))
+        finally:  # 測試失敗時也要收掉背景服務，並等 Windows 放開 server.log
+            if inbox.server_alive(inbox.load_config()):
+                with redirect_stdout(io.StringIO()):
+                    inbox.main(['stop'])
+            for _ in range(80):
+                try:
+                    (home / 'server.log').unlink()
+                    break
+                except FileNotFoundError:
+                    break
+                except PermissionError:
+                    time.sleep(0.05)
 
 
 if __name__ == '__main__':

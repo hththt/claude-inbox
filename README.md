@@ -125,6 +125,21 @@ inbox bark off             # 關閉
 - 開著推播但缺 `BARK_URL` 或設定填錯時，`inbox ask` 會報錯、不放題目；推播送出失敗時題目已經放好，錯誤訊息會提醒 agent 不要重出。錯誤訊息裡的推播網址與 device key 一律遮蔽。
 - `critical` 要先在 iPhone 允許 Bark 的「重要警示」（設定 → Bark → 通知 → 重要警示）。
 
+## 🔀 開關模式（本 fork 新增）
+
+想要「人在電腦前就照常在對話裡問，離開時才用收件匣」：在 `~/.claude-inbox/config.json` 加 `"switch": true`，之後**收件匣服務有沒有開**就是開關。
+
+| 服務 | Claude 怎麼問你 |
+|---|---|
+| 開著 | plugin 的 PreToolUse hook 擋下 AskUserQuestion，要它改用 `inbox ask`（有開 Bark 就推到手機） |
+| 關著 | 照常用 AskUserQuestion；`inbox ask` 會報錯、不放題目，也**不會自動把服務打開** |
+
+```bash
+inbox toggle   # 開著就關、關著就開；開啟時用知會題等級推一則「[收件匣] 已開啟」確認手機收得到
+```
+
+可以把 `inbox toggle` 做成桌面捷徑，出門點一下、回來再點一下。電腦重開機後服務不會自己起來，等於回到平常模式。開關模式下 agent 不該自己開關服務（skill 有寫）。
+
 ## 你已經有自己的開發規則？疊上去，不要換掉
 
 收件匣不會動你的 `CLAUDE.md`、`AGENTS.md` 或任何現有流程。它只加三樣東西：一個 `inbox` 指令、一個網頁，和一個在每輪開始時把答案送進 agent 的 hook。

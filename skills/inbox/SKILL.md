@@ -32,6 +32,11 @@ inbox ask --title "登入頁要不要保留舊的帳密登入？" \
 
 出題後指令會印出題號和網址。第一次出題時會自動在背景起網頁服務。
 
+使用者若開了開關模式（config.json 的 `switch: true`，用桌面捷徑或 `inbox toggle` 開關），服務開著就代表他不在電腦前：
+- 一律先用 AskUserQuestion 問；被 hook 擋下、說收件匣開著，才改用 `inbox ask` 出同樣的題目與選項。
+- `inbox ask` 回「收件匣沒開（使用者在電腦前）」：題目沒放進去，改用 AskUserQuestion 問。
+- 收件匣的開關是使用者的事，不要自己跑 `inbox start`、`stop` 或 `toggle`。
+
 如果 `inbox` 指令找不到，改用 `sh "${CLAUDE_PLUGIN_ROOT}/bin/inbox"`（PowerShell 用 `& "$env:CLAUDE_PLUGIN_ROOT\bin\inbox.cmd"`），後面參數一樣。
 
 使用者開了 Bark 推播時，出題會順便推到他手機。

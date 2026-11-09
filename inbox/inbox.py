@@ -440,6 +440,22 @@ def bark_status(s):
     ])
 
 
+def switch_mode(config):
+    """config.json 的 switch：true 代表「服務開著才用收件匣」，服務的開關就是使用者在不在的開關。"""
+    value = config.get('switch', False)
+    if not isinstance(value, bool):
+        raise ValueError('config.json 的 switch 只能是 true 或 false（目前 %r）' % (value,))
+    return value
+
+
+GUARD_MESSAGE = (
+    '使用者開著收件匣（代表他不在電腦前），所以擋下 AskUserQuestion。'
+    '改用 `inbox ask` 把同樣的題目、選項與推薦項放進收件匣（會推播到他手機），'
+    '然後先做不受這題影響的工作；一定要等答案才能往下時，用 Bash 背景跑 `inbox wait --timeout 1800`。'
+    '他關掉收件匣後才恢復用 AskUserQuestion。不要自己開關收件匣服務。'
+)
+
+
 # ---------- 網頁服務 ----------
 
 @functools.lru_cache(maxsize=None)
@@ -596,6 +612,12 @@ def cmd_ask(args):
         url = bark_url() if bark['enabled'] else ''
     except (ValueError, BarkError) as exc:
         sys.exit('Bark 設定有問題，題目沒有放進收件匣：%s\n（看設定：inbox bark；不想推播：inbox bark off）' % exc)
+    try:
+        switch = switch_mode(config)
+    except ValueError as exc:
+        sys.exit(str(exc))
+    if switch and not server_alive(config):  # 開關模式：服務關著代表使用者在電腦前，不能替他打開
+        sys.exit('收件匣沒開（使用者在電腦前），題目沒有放進去：改用平常的方式問使用者（AskUserQuestion）')
     stamp = datetime.now(TAIPEI).strftime('%Y%m%d-%H%M%S')
     q = {'id': 'q-%s-%s' % (stamp, secrets.token_hex(2)), 'kind': 'info' if args.info else 'ask',
          'title': args.title, 'body': body, 'options': options, 'deadline': args.deadline or '',
@@ -603,7 +625,7 @@ def cmd_ask(args):
          'project': project_of(os.getcwd()), 'session': os.environ.get('CLAUDE_CODE_SESSION_ID', ''),
          'created': now_iso()}
     write_json(home() / 'questions' / (q['id'] + '.json'), q)
-    up = ensure_server(config)
+    up = True if switch else ensure_server(config)
     print('已放進收件匣：%s' % q['id'])
     print('網址：' + page_url(config) if up else '服務沒起來，請看 %s' % (home() / 'server.log'))
     if bark['enabled']:
@@ -677,6 +699,43 @@ def cmd_stop(args):
     pidfile.unlink()
 
 
+def cmd_guard(args):
+    """PreToolUse AskUserQuestion 的 hook：開關模式且服務開著就擋下（exit 2），stderr 給 agent 看。"""
+    sys.stdin.read()  # hook JSON 用不到，讀掉避免寫端阻塞
+    config = read_config(home() / 'config.json')
+    if not switch_mode(config) or not (home() / 'server.pid').exists():
+        return  # 不是開關模式，或服務沒在跑：照常用 AskUserQuestion（沒 pid 檔就不必打 HTTP）
+    if server_alive(config):
+        print(GUARD_MESSAGE, file=sys.stderr)
+        sys.exit(2)
+
+
+def cmd_toggle(args):
+    """開著就關、關著就開；開啟時用知會題等級推一則 Bark，順便確認手機收得到。"""
+    config = load_config()
+    if server_alive(config):
+        cmd_stop(args)
+        for _ in range(25):
+            if not server_alive(config):
+                return print('收件匣已關閉：Claude 恢復在對話裡問你（AskUserQuestion）')
+            time.sleep(0.2)
+        sys.exit('收件匣關不掉，請看 %s' % (home() / 'server.pid'))
+    if not ensure_server(config):
+        sys.exit('收件匣服務沒起來，請看 %s' % (home() / 'server.log'))
+    print('收件匣已開啟：%s' % base_url(config))
+    print('Claude 要你決定的事會改送到這裡' + ('並推播到手機' if switch_mode(config) else ''))
+    try:
+        s = bark_settings(config)
+        if not s['enabled']:
+            return print('Bark 推播是關的，沒有送開啟通知')
+        when = datetime.now(TAIPEI).strftime('%H:%M')
+        send_bark(bark_url(), bark_payload(s, '[收件匣] 已開啟', '要你決定的事會送到這裡（%s）' % when,
+                                           True, bark_link(config)))
+    except (ValueError, BarkError) as exc:
+        sys.exit('收件匣已開啟，但開啟通知推播失敗：%s' % exc)
+    print('已推播開啟通知到手機')
+
+
 def cmd_bark(args):
     changes = {k: v for k, v in (('sound', args.sound), ('volume', args.volume), ('level', args.level),
                                   ('info_level', args.info_level)) if v is not None}
@@ -725,6 +784,8 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
     if argv == ['hook']:  # 每輪都跑的 hook 不經 argparse，省載入時間
         return cmd_hook(None)
+    if argv == ['guard']:
+        return cmd_guard(None)
     import argparse
     parser = argparse.ArgumentParser(prog='inbox', description='Claude Code 收件匣')
     sub = parser.add_subparsers(dest='cmd', required=True)
@@ -758,6 +819,9 @@ def main(argv=None):
     p.add_argument('--info-level', choices=BARK_LEVELS, help='知會題的推播等級')
     p.set_defaults(func=cmd_bark)
     sub.add_parser('hook', help='給 Claude Code hook 用').set_defaults(func=cmd_hook)
+    sub.add_parser('guard', help='給 PreToolUse AskUserQuestion hook 用：開關模式且服務開著就擋下').set_defaults(
+        func=cmd_guard)
+    sub.add_parser('toggle', help='開著就關、關著就開（開關模式的切換）').set_defaults(func=cmd_toggle)
     sub.add_parser('serve', help='前景執行網頁服務').set_defaults(func=lambda a: serve(load_config()))
     sub.add_parser('start', help='背景啟動網頁服務').set_defaults(
         func=lambda a: print(page_url(load_config()) if ensure_server(load_config()) else '啟動失敗'))

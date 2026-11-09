@@ -13,3 +13,4 @@
 2026-11-09 | Bark 開著卻缺 BARK_URL 或設定錯：ask 報錯不放題；推播失敗：題目已存、報錯並提示不要重出 | 參數異常一律報錯，不默默只出題不推；避免 agent 重試造成重複題 | 推播失敗只警告不報錯
 2026-11-09 | Codex 審查後不處理「升級期間新舊版鎖不同可能雙送」與「launcher 遇到 Python 2 不再往下找」 | 前者要剛好舊版 wait 還在跑又來答案，使用者尚無舊版安裝；後者 2026 年 Windows 幾乎不會有 Python 2，且會直接報錯而非靜默 | POSIX 過渡期同時鎖兩個檔、每個候選都試跑版本
 2026-11-09 | 推播改帶不含 token 的收件匣網址（只在服務綁非本機位址時），網頁 token 由 sessionStorage 改 localStorage | 使用者要從手機經 Tailscale 操作，原本「不帶網址」的前提（手機連不到）已不成立；token 仍不經 Bark 與 Apple | 維持不帶網址、帶含 token 完整網址
+2026-11-09 | 開關模式：config 的 switch=true 時以「服務有沒有開」判斷使用者在不在；開著由 plugin 的 PreToolUse guard 把 AskUserQuestion 導去收件匣，關著 inbox ask 報錯且不自動啟動；桌面捷徑跑 inbox toggle | 使用者要用桌面捷徑明確切換；閒置偵測會把盯著畫面看當離開；guard 放在 plugin 內兩個帳號自動同步 | 鍵盤滑鼠閒置 10 分鐘、只靠使用者口頭說要離開、guard 放 ~/.claude/hooks
