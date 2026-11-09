@@ -153,7 +153,8 @@ def base_url(config):
 
 
 def page_url(config):
-    return base_url(config) + ('?t=' + config['token'] if config.get('token') else '')
+    # token 放在網址路徑第一段：書籤、加到主畫面都會帶著它
+    return base_url(config) + config.get('token', '') + '/'
 
 
 # ---------- 題目與事件 ----------
@@ -379,20 +380,13 @@ def redact(text, url):
     return text
 
 
-def bark_link(config):
-    """點推播要開的收件匣網址，不含 token（token 由網頁存在手機的 localStorage）。
+def bark_payload(s, title, body, info):
+    """待決定題用 level（預設 critical，靜音也響）；知會題用 info_level（預設 active），一律單響。
 
-    服務只開在本機時手機連不到，就不帶網址。
+    不帶網址：token 在網址路徑裡，不能經過 Bark 伺服器與 Apple；收件匣從手機的書籤開。
     """
-    return '' if is_loopback(config['host']) else base_url(config)
-
-
-def bark_payload(s, title, body, info, link=''):
-    """待決定題用 level（預設 critical，靜音也響）；知會題用 info_level（預設 active），一律單響。"""
     level = s['info_level'] if info else s['level']
     payload = {'title': title, 'body': body, 'group': 'inbox', 'level': level, 'sound': s['sound']}
-    if link:
-        payload['url'] = link
     if level == 'critical':
         payload['volume'] = s['volume']  # 音量只對重要警示有效
     if s['call'] and not info:
@@ -422,12 +416,12 @@ def send_bark(url, payload):
         raise BarkError(redact('HTTP %s：%s' % (status, raw.decode('utf-8', 'replace').strip()), url))
 
 
-def notify_question(q, s, url, link):
-    # 推播只帶題目標題、期限與不含 token 的網址：token 不經過 Bark 伺服器與 Apple
+def notify_question(q, s, url):
+    # 推播只帶題目標題、來源與期限
     info = q['kind'] == 'info'
     title = '[收件匣/%s] %s' % (q['from'], '知會' if info else '待你決定')
     body = q['title'] + ('\n期限：' + q['deadline'] if q['deadline'] else '')
-    send_bark(url, bark_payload(s, title, body, info, link))
+    send_bark(url, bark_payload(s, title, body, info))
 
 
 def bark_status(s):
@@ -477,16 +471,22 @@ def handler_class():
                 hosts |= {'localhost:%s' % port, '127.0.0.1:%s' % port}
             return hosts
 
-        def check(self, api):
+        def route(self):
+            """網址第一段要是 token，回傳其後的路徑（'/'、'/api/state'…）；只有 /<token> 回 ''，不對回 None。"""
+            token = self.config.get('token', '')
+            head, sep, rest = self.path.split('?', 1)[0][1:].partition('/')
+            # request line 以 latin-1 解碼，轉回位元組再比，非 ASCII 字元也不會讓 compare_digest 丟例外
+            if not token or not secrets.compare_digest(head.encode('latin-1'), token.encode('utf-8')):
+                return None
+            return '/' + rest if sep else ''
+
+        def check(self):
             host = self.headers.get('Host', '')
             if host not in self.allowed_hosts():
                 return self.send_text(403, 'Host 不符')
             origin = self.headers.get('Origin')
             if origin and origin != 'http://' + host:
                 return self.send_text(403, 'Origin 不符')
-            token = self.config.get('token')
-            if api and token and not secrets.compare_digest(self.headers.get('X-Inbox-Token', ''), token):
-                return self.send_text(401, '需要 token')
             return True
 
         def send_text(self, code, text, ctype='text/plain; charset=utf-8'):
@@ -496,20 +496,27 @@ def handler_class():
             self.send_header('Content-Length', str(len(body)))
             self.send_header('Cache-Control', 'no-store')
             self.send_header('X-Content-Type-Options', 'nosniff')
+            self.send_header('Referrer-Policy', 'no-referrer')  # 網址含 token，點出去的連結不能帶走
             self.end_headers()
             self.wfile.write(body)
             return False
 
         def do_GET(self):
-            path = self.path.split('?', 1)[0]
-            if path == '/':
-                if self.check(api=False):
-                    self.send_text(200, PAGE.read_text(encoding='utf-8'), 'text/html; charset=utf-8')
+            if not self.check():
+                return
+            path = self.route()
+            if path == '':  # /<token> 少了結尾斜線：網頁用相對路徑打 API，要導到 /<token>/
+                self.send_response(301)
+                self.send_header('Location', '/%s/' % self.config['token'])
+                self.send_header('Content-Length', '0')
+                self.send_header('Referrer-Policy', 'no-referrer')
+                self.end_headers()
+            elif path == '/':
+                self.send_text(200, PAGE.read_text(encoding='utf-8'), 'text/html; charset=utf-8')
             elif path == '/api/state':
-                if self.check(api=True):
-                    self.send_text(200, json.dumps(build_state(), ensure_ascii=False),
-                                   'application/json; charset=utf-8')
-            else:
+                self.send_text(200, json.dumps(build_state(), ensure_ascii=False),
+                               'application/json; charset=utf-8')
+            else:  # token 不對與路徑不存在一樣回 404，不透露哪裡錯
                 self.send_text(404, 'not found')
 
         def do_POST(self):
@@ -519,10 +526,10 @@ def handler_class():
                 length = -1
             # 先把本文讀完再回錯：Windows 關掉還有未讀資料的連線會送 RST，用戶端收不到錯誤碼
             raw = self.rfile.read(length) if 0 < length <= MAX_BODY else None
-            if self.path != '/api/answer':
-                return self.send_text(404, 'not found')
-            if not self.check(api=True):
+            if not self.check():
                 return
+            if self.route() != '/api/answer':
+                return self.send_text(404, 'not found')
             if not self.headers.get('Content-Type', '').startswith('application/json'):
                 return self.send_text(415, '只收 JSON')
             if raw is None:
@@ -563,8 +570,7 @@ def serve(config):
 
 def server_alive(config):
     import urllib.request
-    req = urllib.request.Request('http://%s:%s/api/state' % (connect_host(config), config['port']),
-                                 headers={'X-Inbox-Token': config.get('token', '')})
+    req = urllib.request.Request(page_url(config) + 'api/state')
     try:
         with urllib.request.urlopen(req, timeout=2) as resp:
             body = json.loads(resp.read().decode('utf-8'))
@@ -630,7 +636,7 @@ def cmd_ask(args):
     print('網址：' + page_url(config) if up else '服務沒起來，請看 %s' % (home() / 'server.log'))
     if bark['enabled']:
         try:
-            notify_question(q, bark, url, bark_link(config))
+            notify_question(q, bark, url)
         except BarkError as exc:
             sys.exit('Bark 推播失敗（題目已經放進收件匣，不要重出）：%s' % exc)
         print('已用 Bark 推播到手機')
@@ -733,14 +739,13 @@ def cmd_toggle(args):
             sys.exit('收件匣關不掉，請看 %s' % (home() / 'server.pid'))
         if not ensure_server(config):
             sys.exit('收件匣服務沒起來，請看 %s' % (home() / 'server.log'))
-    print('收件匣已開啟：%s' % base_url(config))
+    print('收件匣已開啟：%s' % page_url(config))
     print('Claude 要你決定的事會改送到這裡' + ('並推播到手機' if switch else ''))
     try:
         if not s['enabled']:
             return print('Bark 推播是關的，沒有送開啟通知')
         when = datetime.now(TAIPEI).strftime('%H:%M')
-        send_bark(bark_url(), bark_payload(s, '[收件匣] 已開啟', '要你決定的事會送到這裡（%s）' % when,
-                                           True, bark_link(config)))
+        send_bark(bark_url(), bark_payload(s, '[收件匣] 已開啟', '要你決定的事會送到這裡（%s）' % when, True))
     except (ValueError, BarkError) as exc:
         sys.exit('收件匣已開啟，但開啟通知推播失敗：%s' % exc)
     print('已推播開啟通知到手機')
@@ -766,7 +771,7 @@ def cmd_bark(args):
             body = '鈴聲 %s，%s，等級 %s，音量 %d（%s）' % (
                 s['sound'], '連響約 30 秒' if s['call'] else '單響', s['level'], s['volume'],
                 datetime.now(TAIPEI).strftime('%H:%M:%S'))
-            send_bark(bark_url(), bark_payload(s, '[收件匣] 測試推播', body, False, bark_link(read_config(path))))
+            send_bark(bark_url(), bark_payload(s, '[收件匣] 測試推播', body, False))
             return print('已送出測試推播：' + body)
         if args.action == 'status':
             return print(bark_status(bark_settings(read_config(path))))

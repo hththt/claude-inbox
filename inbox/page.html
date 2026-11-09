@@ -280,17 +280,9 @@
       <span class="err" id="err" role="alert"></span>
     </footer>
     <script>
-      // token 記在 localStorage：手機用完整網址開過一次後，點 Bark 推播（網址不含 token）也能直接用
-      const params = new URLSearchParams(location.search);
-      if (params.get("t")) {
-        localStorage.setItem("inbox-token", params.get("t"));
-        history.replaceState(null, "", location.pathname);
-      }
-      const TOKEN = localStorage.getItem("inbox-token") || "";
-      const HEADERS = {
-        "Content-Type": "application/json",
-        "X-Inbox-Token": TOKEN,
-      };
+      // token 在網址路徑 /<token>/ 裡，API 用相對路徑打就會帶著它
+      localStorage.removeItem("inbox-token"); // 清掉舊版存的 token
+      const HEADERS = { "Content-Type": "application/json" };
       let STATE = { questions: [] };
       let lastJson = "";
       let dirtyWhileEditing = false;
@@ -483,14 +475,14 @@
 
       async function load() {
         try {
-          const res = await fetch("/api/state", {
+          const res = await fetch("api/state", {
             headers: HEADERS,
             cache: "no-store",
           });
           if (!res.ok)
             throw new Error(
-              res.status === 401
-                ? "token 不對或還沒記住，請用 inbox url 印出的完整網址開一次"
+              res.status === 404
+                ? "網址的 token 不對（可能換過了），請用 inbox url 印出的網址重開"
                 : "讀取失敗（" + res.status + "）",
             );
           const text = await res.text();
@@ -526,7 +518,7 @@
           };
         });
         $("err").textContent = "";
-        const res = await fetch("/api/answer", {
+        const res = await fetch("api/answer", {
           method: "POST",
           headers: HEADERS,
           body: JSON.stringify({ answers }),

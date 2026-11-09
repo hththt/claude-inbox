@@ -1,4 +1,5 @@
 """收件匣單元測試：python3 -m unittest discover tests（Windows 用 python）"""
+import http.client
 import io
 import json
 import os
@@ -168,8 +169,11 @@ class Delivery(Base):
         self.assertTrue(inbox.build_state()['questions'][0]['closed'])
 
 
+TOKEN = 'tok-server-test'
+
+
 class Server(Base):
-    def start(self, host='127.0.0.1', token=''):
+    def start(self, host='127.0.0.1', token=TOKEN):
         port = free_port()
         handler = inbox.handler_class()
         handler.config = {'host': host, 'port': port, 'token': token}
@@ -192,25 +196,49 @@ class Server(Base):
     def test_answer_round_trip(self):
         qid = self.ask('--title', 't', '--option', 'A=甲')
         port = self.start()
-        self.assertEqual(self.req(port, '/')[0], 200)
-        code, body = self.req(port, '/api/answer', {'answers': [{'question_id': qid, 'choice': 'A'}]})
+        self.assertEqual(self.req(port, '/%s/' % TOKEN)[0], 200)
+        code, body = self.req(port, '/%s/api/answer' % TOKEN, {'answers': [{'question_id': qid, 'choice': 'A'}]})
         self.assertEqual((code, json.loads(body)), (200, {'stored': 1}))
-        state = json.loads(self.req(port, '/api/state')[1])
+        state = json.loads(self.req(port, '/%s/api/state' % TOKEN)[1])
         self.assertEqual(state['questions'][0]['answers'][0]['choice'], 'A')
 
     def test_bad_host_origin_and_invalid_answer_rejected(self):
         qid = self.ask('--title', 't', '--option', 'A=甲')
         port = self.start()
-        self.assertEqual(self.req(port, '/api/state', headers={'Host': 'evil.example:80'})[0], 403)
-        self.assertEqual(self.req(port, '/api/answer', {'answers': [{'question_id': qid, 'choice': 'A'}]},
+        api = '/%s/api/' % TOKEN
+        self.assertEqual(self.req(port, api + 'state', headers={'Host': 'evil.example:80'})[0], 403)
+        self.assertEqual(self.req(port, api + 'answer', {'answers': [{'question_id': qid, 'choice': 'A'}]},
                                   headers={'Origin': 'http://evil.example'})[0], 403)
-        self.assertEqual(self.req(port, '/api/answer', {'answers': [{'question_id': qid, 'choice': 'Z'}]})[0], 400)
+        self.assertEqual(self.req(port, api + 'answer', {'answers': [{'question_id': qid, 'choice': 'Z'}]})[0], 400)
         self.assertEqual(inbox.read_events(), [])
 
-    def test_token_required_when_configured(self):
+    def test_token_must_be_first_path_segment(self):
+        qid = self.ask('--title', 't', '--option', 'A=甲')
         port = self.start(token='secret-token')
-        self.assertEqual(self.req(port, '/api/state')[0], 401)
-        self.assertEqual(self.req(port, '/api/state', headers={'X-Inbox-Token': 'secret-token'})[0], 200)
+        for path in ('/', '/api/state', '/api/state?t=secret-token', '/wrong-token/', '/wrong-token/api/state',
+                     '/secret-tokenX/api/state', '/secret-token/nope', '/%E4%B8%AD/api/state'):
+            self.assertEqual(self.req(port, path)[0], 404, path)
+        self.assertEqual(self.req(port, '/api/state', headers={'X-Inbox-Token': 'secret-token'})[0], 404)
+        self.assertEqual(self.req(port, '/wrong/api/answer', {'answers': [{'question_id': qid, 'choice': 'A'}]})[0],
+                         404)
+        self.assertEqual(inbox.read_events(), [])
+        self.assertEqual(self.req(port, '/secret-token/api/state')[0], 200)
+        self.assertEqual(self.req(port, '/secret-token/?x=1')[0], 200)
+
+    def test_token_without_trailing_slash_redirects(self):
+        port = self.start(token='secret-token')
+        conn = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+        self.addCleanup(conn.close)
+        conn.request('GET', '/secret-token')
+        resp = conn.getresponse()
+        resp.read()
+        self.assertEqual((resp.status, resp.getheader('Location')), (301, '/secret-token/'))
+        self.assertEqual(self.req(port, '/secret-token')[0], 200)  # urllib 跟著轉址到網頁
+
+    def test_empty_token_serves_nothing(self):
+        port = self.start(token='')
+        for path in ('/', '//', '//api/state'):
+            self.assertEqual(self.req(port, path)[0], 404, path)
 
     def test_other_program_returning_200_is_not_taken_for_inbox(self):
         from http.server import BaseHTTPRequestHandler
@@ -232,13 +260,14 @@ class Server(Base):
         httpd = ThreadingHTTPServer(('127.0.0.1', port), Fake)
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         self.addCleanup(httpd.shutdown)
-        self.assertFalse(inbox.server_alive({'host': '127.0.0.1', 'port': port, 'token': ''}))
+        self.assertFalse(inbox.server_alive({'host': '127.0.0.1', 'port': port, 'token': TOKEN}))
         for body in (b'{}', b'["questions"]', b'"questions"'):
             Fake.body = body
-            self.assertFalse(inbox.server_alive({'host': '127.0.0.1', 'port': port, 'token': ''}))
+            self.assertFalse(inbox.server_alive({'host': '127.0.0.1', 'port': port, 'token': TOKEN}))
         Fake.body = b'<html>spa fallback</html>'
         real = self.start()
-        self.assertTrue(inbox.server_alive({'host': '127.0.0.1', 'port': real, 'token': ''}))
+        self.assertTrue(inbox.server_alive({'host': '127.0.0.1', 'port': real, 'token': TOKEN}))
+        self.assertFalse(inbox.server_alive({'host': '127.0.0.1', 'port': real, 'token': 'other'}))
 
     def test_background_server_log_never_contains_token(self):
         import signal
@@ -297,7 +326,7 @@ class Server(Base):
         config = inbox.load_config()
         self.assertTrue(config['token'])
         self.assertMode(path, '0o600')
-        self.assertIn('?t=' + config['token'], inbox.page_url(config))
+        self.assertEqual(inbox.page_url(config), 'http://100.64.0.1:%d/%s/' % (inbox.DEFAULT_PORT, config['token']))
 
     def test_urls_use_configured_loopback_and_rewrite_only_localhost(self):
         self.assertEqual(inbox.base_url({'host': 'localhost', 'port': 1}), 'http://127.0.0.1:1/')
@@ -500,18 +529,17 @@ class Bark(Base):
         self.assertIn('status 不接受', self.exit_message(['bark', 'status', '--sound', 'x']))
 
 
-    def test_push_links_to_inbox_without_token_only_when_reachable(self):
+    def test_push_never_carries_url_or_token(self):
         self.bark('on')
-        self.ask('--title', '本機')
-        self.assertNotIn('url', self.fake.received[-1][1])  # 只開在本機：手機連不到，不帶網址
         path = Path(os.environ['CLAUDE_INBOX_HOME']) / 'config.json'
         config = json.loads(path.read_text(encoding='utf-8'))
-        config['host'] = '100.64.0.1'
+        config['host'] = '100.64.0.1'  # 手機連得到的位址也一樣不帶
         path.write_text(json.dumps(config), encoding='utf-8')
         self.ask('--title', 'Tailscale')
-        payload = self.fake.received[-1][1]
-        self.assertEqual(payload['url'], 'http://100.64.0.1:7799/')
-        self.assertNotIn(inbox.load_config()['token'], json.dumps(payload))
+        self.bark('test')
+        for _, payload in self.fake.received:
+            self.assertNotIn('url', payload)
+            self.assertNotIn(inbox.load_config()['token'], json.dumps(payload))
 
     def test_malformed_bark_url_never_leaks_key(self):
         os.environ['BARK_URL'] = 'api.day.app/' + DEVICE_KEY  # 漏掉 https://
@@ -645,6 +673,7 @@ class Switch(Base):
                 payload = fake.received[0][1]
                 self.assertEqual((payload['title'], payload['level']), ('[收件匣] 已開啟', 'active'))
                 self.assertNotIn('call', payload)
+                self.assertNotIn('url', payload)
                 with redirect_stdout(io.StringIO()) as out:
                     inbox.main(['toggle'])
                 self.assertIn('收件匣已關閉', out.getvalue())

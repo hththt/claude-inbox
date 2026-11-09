@@ -15,3 +15,4 @@
 2026-11-09 | 推播改帶不含 token 的收件匣網址（只在服務綁非本機位址時），網頁 token 由 sessionStorage 改 localStorage | 使用者要從手機經 Tailscale 操作，原本「不帶網址」的前提（手機連不到）已不成立；token 仍不經 Bark 與 Apple | 維持不帶網址、帶含 token 完整網址
 2026-11-09 | 開關模式：config 的 switch=true 時以「服務有沒有開」判斷使用者在不在；開著由 plugin 的 PreToolUse guard 把 AskUserQuestion 導去收件匣，關著 inbox ask 報錯且不自動啟動；桌面捷徑跑 inbox toggle | 使用者要用桌面捷徑明確切換；閒置偵測會把盯著畫面看當離開；guard 放在 plugin 內兩個帳號自動同步 | 鍵盤滑鼠閒置 10 分鐘、只靠使用者口頭說要離開、guard 放 ~/.claude/hooks
 2026-11-09 | 開關狀態仍以「服務有沒有回應」判斷，不改成狀態檔 | 狀態檔在重開機後會殘留，違反「沒啟動就恢復原本方式」；Tailscale 斷線時的誤判只讓提問改回對話，而斷線期間手機本來也連不到 | 開關狀態寫檔、比對 PID 與開機時間
+2026-11-09 | token 從 `?t=` 參數改放網址路徑 `/<token>/`，網頁與 API 都在這段底下，不對一律 404；推播不再帶網址；網頁不再用 localStorage 記 token | 使用者要書籤與主畫面捷徑直接帶 token；網址含 token 後就不能經過 Bark 與 Apple；路徑形式下網頁用相對路徑打 API 即可 | 維持 `?t=`＋localStorage、推播帶不含 token 的根網址（根網址改回 404 已無用）

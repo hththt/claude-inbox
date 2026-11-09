@@ -120,7 +120,7 @@ inbox bark off             # 關閉
 | `--volume` | `2` | 重要警示音量 0-10，只對 `critical` 有效 |
 | `--info-level` | `active` | 知會題（`inbox ask --info`）的推播等級；知會題一律單響 |
 
-- 推播標題是 `[收件匣/<來源>] 待你決定` 或 `知會`，內文是題目標題與期限。服務綁在 Tailscale 等非本機位址時，推播會帶**不含 token** 的收件匣網址，點開就進收件匣（手機要先用 `inbox url` 的完整網址開過一次，網頁才記得 token）；只開在本機時不帶網址。
+- 推播標題是 `[收件匣/<來源>] 待你決定` 或 `知會`，內文是題目標題與期限。推播**不帶網址**：token 在網址裡，不能經過 Bark 伺服器與 Apple。收件匣從手機的書籤或主畫面捷徑開。
 - 設定存在 `~/.claude-inbox/config.json` 的 `bark` 段，改了立刻生效，不用重啟服務。欄位填錯會直接報錯，不會默默改用預設值。
 - 開著推播但缺 `BARK_URL` 或設定填錯時，`inbox ask` 會報錯、不放題目；推播送出失敗時題目已經放好，錯誤訊息會提醒 agent 不要重出。錯誤訊息裡的推播網址與 device key 一律遮蔽。
 - `critical` 要先在 iPhone 允許 Bark 的「重要警示」（設定 → Bark → 通知 → 重要警示）。
@@ -201,7 +201,7 @@ python3 /path/to/claude-inbox/inbox/inbox.py ask --title "..." --option "A=..." 
 { "host": "你的 Tailscale 或內網位址", "port": 7799 }
 ```
 
-位址只支援 IPv4，網址要用 IP（用 MagicDNS 名稱連會被 Host 檢查擋下）。手機第一次用 `inbox url` 印出的完整網址開，網頁會把 token 記在手機瀏覽器的 localStorage，之後開不含 token 的網址（例如點 Bark 推播）也能用；iOS Safari 太久沒開可能清掉，再用完整網址開一次即可。Windows 上 Tailscale 安裝時自帶 `Tailscale-In` 防火牆規則，已放行整個 tailnet 連任何埠，所以不用另開；也因為允許規則是「任一條符合就放行」，想只讓手機連，加允許規則沒用，要加封鎖規則擋掉其他來源。token 不分本機或遠端，第一次使用時自動產生，寫進同一個檔（macOS／Linux 上檔案權限 600，資料夾權限 700；Windows 靠使用者資料夾本身的存取控制）。改位址或換 token 後都要重新啟動服務：`inbox stop` 再 `inbox start`。執行中的服務不會自動套用新設定，舊 token 在它重啟前仍然有效。用 `inbox url` 可以印出帶 token 的完整網址。
+位址只支援 IPv4，網址要用 IP（用 MagicDNS 名稱連會被 Host 檢查擋下）。token 放在網址路徑裡：`http://<IP>:<埠>/<token>/`。用 `inbox url` 印出來，在手機上加成書籤或主畫面捷徑就能一直用；token 不對或少了這一段一律回 404。Windows 上 Tailscale 安裝時自帶 `Tailscale-In` 防火牆規則，已放行整個 tailnet 連任何埠，所以不用另開；也因為允許規則是「任一條符合就放行」，想只讓手機連，加允許規則沒用，要加封鎖規則擋掉其他來源。token 不分本機或遠端，第一次使用時自動產生，寫進同一個檔（macOS／Linux 上檔案權限 600，資料夾權限 700；Windows 靠使用者資料夾本身的存取控制）。改位址或換 token 後都要重新啟動服務：`inbox stop` 再 `inbox start`。執行中的服務不會自動套用新設定，舊 token 在它重啟前仍然有效。用 `inbox url` 可以印出帶 token 的完整網址。
 
 ### 資料放哪
 
@@ -223,8 +223,8 @@ python3 /path/to/claude-inbox/inbox/inbox.py ask --title "..." --option "A=..." 
 
 - 只收 `Host` 與 `Origin` 符合的請求，擋掉別的網頁偷打你的本機服務。
 - 所有 API 都要 token，本機也一樣：答案會被放進 agent 的上下文，不能讓同一台機器上的其他程式隨便寫入。
-- 頁面把題目文字當純文字顯示，只有網址會變成連結。
-- 回答只在你的機器上流動，沒有任何外送。開了 Bark 推播時，只有題目標題、來源、期限與不含 token 的收件匣網址會經過 Bark 伺服器與 Apple 推播服務；token、題目內文與回答都不會送出。
+- 頁面把題目文字當純文字顯示，只有網址會變成連結；回應一律帶 `Referrer-Policy: no-referrer`，點出去的連結不會帶走含 token 的網址。
+- 回答只在你的機器上流動，沒有任何外送。開了 Bark 推播時，只有題目標題、來源與期限會經過 Bark 伺服器與 Apple 推播服務；網址、token、題目內文與回答都不會送出。
 
 ### 需求
 
